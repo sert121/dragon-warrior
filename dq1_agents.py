@@ -7,6 +7,9 @@ import openai
 import os
 from collections import deque
 from dotenv import load_dotenv # NEW: Import the library
+import ollama  
+from ollama import Image  
+
 
 # NEW: Load the environment variables from your .env.local file
 load_dotenv(dotenv_path='.env.local')
@@ -59,7 +62,7 @@ def read_game_state():
     return state
 
 def capture_and_ocr_screen():
-    """Captures the game screen and extracts text using OCR."""
+    """Captures the game screen and returns both the image and extracted text."""
     with mss.mss() as sct:
         sct_img = sct.grab(MONITOR_REGION)
         frame = np.array(sct_img)
@@ -67,10 +70,11 @@ def capture_and_ocr_screen():
         _, thresh_frame = cv2.threshold(gray_frame, 150, 255, cv2.THRESH_BINARY_INV)
         try:
             text = pytesseract.image_to_string(thresh_frame)
-            return " ".join(text.split()) # Clean up whitespace
+            text = " ".join(text.split())  # Clean up whitespace
         except pytesseract.TesseractNotFoundError:
             print("Tesseract not found. Please install it and add it to your PATH.")
-            return ""
+            text = ""
+        return sct_img, text
 
 def construct_prompt(game_state, screen_text, history):
     """Builds a detailed prompt for the LLM."""
@@ -78,7 +82,7 @@ def construct_prompt(game_state, screen_text, history):
         return None
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
-You are playing cautiously.
+You are playing cautiously. You will be provied a screenshot of the game screen.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -102,6 +106,27 @@ The available buttons are: up, down, left, right, a (confirm/talk), b (cancel/me
 Respond ONLY with a single word for the button to press. For example: a
 """
     return prompt
+
+def query_ollama(prompt, image):
+    """Sends the prompt to ollama model gets a response via """
+    # save the image to a file
+    cv2.imwrite("game_screen.png", image)
+    print("--- PROMPT TO LLM ---")
+    print(prompt)
+    print("---------------------")
+    # Send a message with text and image  
+    response = ollama.chat(  
+        model='gemma:3n',  # Assuming this is your model name  
+        messages=[  
+            {  
+                'role': 'user',  
+                'content': prompt,  
+                'images': ['game_screen.png']  # Can be file path, bytes, or base64  
+            }  
+        ]  
+    )  
+    
+    print(response.message.content)
 
 def query_llm(prompt):
     """Sends the prompt to the OpenRouter API and gets a response."""
@@ -141,12 +166,12 @@ if __name__ == "__main__":
         if not game_state:
             time.sleep(1)
             continue
-        screen_text = capture_and_ocr_screen()
+        image, screen_text = capture_and_ocr_screen()
         prompt = construct_prompt(game_state, screen_text, list(action_history))
         if not prompt:
             time.sleep(1)
             continue
-        chosen_action = query_llm(prompt)
+        chosen_action = query_ollama(prompt,image)
         valid_actions = ["UP", "DOWN", "LEFT", "RIGHT", "A", "B"]
         if chosen_action in valid_actions:
             take_action(chosen_action)
