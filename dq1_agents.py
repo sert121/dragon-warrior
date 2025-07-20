@@ -14,35 +14,15 @@ from ollama import Image
 # NEW: Load the environment variables from your .env.local file
 load_dotenv(dotenv_path='.env.local')
 
-
 # --- 1. CONFIGURATION ---
 
 # -- File Paths (macOS) --
-base_folder = os.path.expanduser('~/Library/Application Support/Mesen2/LuaScriptData/dq1_stats')
+base_folder = os.path.expanduser('~/Library/Application Support/Mesen2/LuaScriptData/dq1/')
 STATS_FILE_PATH = os.path.join(base_folder, "dq1_stats.txt")
 ACTION_FILE_PATH = os.path.join(base_folder, "action.txt")
 
 # -- Screen Capture --
 MONITOR_REGION = {"top": 40, "left": 0, "width": 512, "height": 480}
-
-# -- OpenRouter API Configuration --
-# MODIFIED: Load the key from the environment instead of hardcoding it
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL_NAME = "google/gemini-2.0-flash-exp:free"
-YOUR_SITE_URL = "http://localhost:8080"
-
-# NEW: Add a check to ensure the API key was loaded successfully
-if not OPENROUTER_API_KEY:
-    raise ValueError("OpenRouter API key not found. Please check your .env.local file.")
-
-# Initialize the API client pointing to OpenRouter's endpoint
-client = openai.OpenAI(
-  base_url="https://openrouter.ai/api/v1",
-  api_key=OPENROUTER_API_KEY,
-)
-
-
-# --- 2. HELPER FUNCTIONS (No changes needed below this line) ---
 
 def read_game_state():
     """Reads the key-value pairs from the stats file written by Lua."""
@@ -66,6 +46,8 @@ def capture_and_ocr_screen():
     with mss.mss() as sct:
         sct_img = sct.grab(MONITOR_REGION)
         frame = np.array(sct_img)
+        # get color image
+        color_frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
         gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
         _, thresh_frame = cv2.threshold(gray_frame, 150, 255, cv2.THRESH_BINARY_INV)
         try:
@@ -74,15 +56,15 @@ def capture_and_ocr_screen():
         except pytesseract.TesseractNotFoundError:
             print("Tesseract not found. Please install it and add it to your PATH.")
             text = ""
-        return sct_img, text
+        return color_frame, text
 
-def construct_prompt(game_state, screen_text, history):
+def construct_prompt(game_state, history):
     """Builds a detailed prompt for the LLM."""
     if not game_state:
         return None
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
-You are playing cautiously. You will be provied a screenshot of the game screen.
+You are playing cautiously. You will be provied a screenshot of the game screen.Dont get stuyck, look at the history to be unstuck.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -93,8 +75,6 @@ Current Status:
 - Map ID: {game_state.get('map_id', 'N/A')} (0 is Overworld)
 - Enemy HP: {game_state.get('enemy_hp', 'N/A')} (0 means no battle)
 
-Text on Screen:
-"{screen_text}"
 
 Recent History (last 3 actions):
 {history}
@@ -102,7 +82,8 @@ Recent History (last 3 actions):
 Your Task:
 Based on everything you see, what is the single best button to press right now?
 The available buttons are: up, down, left, right, a (confirm/talk), b (cancel/menu).
-
+Dont get stuck, look at the history to be unstuck. Dont take the same action fourtimes in a row.
+Explore the map, dont just stay in one place.
 Respond ONLY with a single word for the button to press. For example: a
 """
     return prompt
@@ -116,7 +97,7 @@ def query_ollama(prompt, image):
     print("---------------------")
     # Send a message with text and image  
     response = ollama.chat(  
-        model='gemma:3n',  # Assuming this is your model name  
+        model='gemma3n',  # Assuming this is your model name  
         messages=[  
             {  
                 'role': 'user',  
@@ -127,6 +108,7 @@ def query_ollama(prompt, image):
     )  
     
     print(response.message.content)
+    return response.message.content.strip().lower()
 
 def query_llm(prompt):
     """Sends the prompt to the OpenRouter API and gets a response."""
@@ -167,15 +149,17 @@ if __name__ == "__main__":
             time.sleep(1)
             continue
         image, screen_text = capture_and_ocr_screen()
-        prompt = construct_prompt(game_state, screen_text, list(action_history))
+        prompt = construct_prompt(game_state, list(action_history))
         if not prompt:
             time.sleep(1)
             continue
         chosen_action = query_ollama(prompt,image)
-        valid_actions = ["UP", "DOWN", "LEFT", "RIGHT", "A", "B"]
-        if chosen_action in valid_actions:
+
+        valid_actions = ["up", "down", "left", "right", "a", "b"]
+        if chosen_action.strip().lower() in valid_actions:
             take_action(chosen_action)
-            action_history.append(f"Took action '{chosen_action}' with HP={game_state.get('hp')}")
+            game_state['action'] = chosen_action
+            action_history.append(game_state)
             print(f"ACTION SENT: {chosen_action}\n")
         else:
             print(f"LLM provided an invalid action: '{chosen_action}'. Defaulting to 'B'.")
