@@ -99,7 +99,7 @@ Your Task:
 Based on everything you see, what is the single best button to press right now?
 The available buttons are: up, down, left, right, a (confirm/talk), b (cancel/menu).
 
-Respond ONLY with a single word for the button to press. For example: A
+Respond ONLY with a single word for the button to press. For example: a
 """
     return prompt
 
@@ -116,7 +116,7 @@ def query_llm(prompt):
                 "HTTP-Referer": YOUR_SITE_URL,
             }
         )
-        action = response.choices[0].message.content.strip()
+        action = response.choices[0].message.content.strip().lower()
         return action
     except Exception as e:
         print(f"Error querying OpenRouter API: {e}")
