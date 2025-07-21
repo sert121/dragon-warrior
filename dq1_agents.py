@@ -9,12 +9,13 @@ from collections import deque
 from dotenv import load_dotenv # NEW: Import the library
 import ollama  
 from ollama import Image  
+import os
+from cerebras.cloud.sdk import Cerebras
 
 
 # NEW: Load the environment variables from your .env.local file
 load_dotenv(dotenv_path='.env.local')
 
-# --- 1. CONFIGURATION ---
 
 # -- File Paths (macOS) --
 base_folder = os.path.expanduser('~/Library/Application Support/Mesen2/LuaScriptData/dq1/')
@@ -75,15 +76,24 @@ Current Status:
 - Map ID: {game_state.get('map_id', 'N/A')} (0 is Overworld)
 - Enemy HP: {game_state.get('enemy_hp', 'N/A')} (0 means no battle)
 
-
 Recent History (last 3 actions):
 {history}
 
 Your Task:
 Based on everything you see, what is the single best button to press right now?
-The available buttons are: up, down, left, right, a (confirm/talk), b (cancel/menu).
-Dont get stuck, look at the history to be unstuck. Dont take the same action fourtimes in a row.
-Explore the map, dont just stay in one place.
+The available buttons are: [up, down, left, right, a, b]
+up: move up
+down: move down
+left: move left
+right: move right
+a: take action
+b: back
+
+if you are in a menu or a black box you should use:
+[menu-up, menu-down, menu-left, menu-right]
+tip: if you are in a interactive conversation, you should use a, to take action.
+tip: if you are in a menu, you cant move left or right, you have to use menu-left to scroll all the way down before you can do any movement.
+
 Respond ONLY with a single word for the button to press. For example: a
 """
     return prompt
@@ -97,7 +107,7 @@ def query_ollama(prompt, image):
     print("---------------------")
     # Send a message with text and image  
     response = ollama.chat(  
-        model='gemma3n',  # Assuming this is your model name  
+        model='',  # Assuming this is your model name  
         messages=[  
             {  
                 'role': 'user',  
@@ -110,24 +120,22 @@ def query_ollama(prompt, image):
     print(response.message.content)
     return response.message.content.strip().lower()
 
-def query_llm(prompt):
-    """Sends the prompt to the OpenRouter API and gets a response."""
-    print("--- PROMPT TO LLM ---")
-    print(prompt)
-    print("---------------------")
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            extra_headers={
-                "HTTP-Referer": YOUR_SITE_URL,
-            }
-        )
-        action = response.choices[0].message.content.strip().lower()
-        return action
-    except Exception as e:
-        print(f"Error querying OpenRouter API: {e}")
-        return "B" # Default to a safe action on error
+
+def query_cerebras(prompt, image):
+    client = Cerebras(
+    api_key=os.environ.get("CEREBRAS_API_KEY"),
+    )
+
+    chat_completion = client.chat.completions.create(
+    messages=[
+    {"role": "user", "content": prompt, "images": ["game_screen.png"]}
+    ],
+    model="llama-4-scout-17b-16e-instruct",
+    )
+
+    response = chat_completion.choices[0].message.content
+    return response.strip().lower()
+    
 
 def take_action(action):
     """Writes the chosen action to the action file for Lua to read."""
@@ -140,7 +148,6 @@ def take_action(action):
 # --- 3. THE MAIN LOOP ---
 if __name__ == "__main__":
     action_history = deque(maxlen=3)
-    print("Starting LLM Agent for Dragon Quest 1 (using OpenRouter)...")
     print("Ensure Mesen 2 is running with the Lua script.")
     time.sleep(3)
     while True:
@@ -153,9 +160,9 @@ if __name__ == "__main__":
         if not prompt:
             time.sleep(1)
             continue
-        chosen_action = query_ollama(prompt,image)
+        chosen_action = query_cerebras(prompt,image)
 
-        valid_actions = ["up", "down", "left", "right", "a", "b"]
+        valid_actions = ["up", "down", "left", "right", "a", "b", "menu-left", "menu-right", "menu-up", "menu-down"]
         if chosen_action.strip().lower() in valid_actions:
             take_action(chosen_action)
             game_state['action'] = chosen_action
@@ -166,3 +173,4 @@ if __name__ == "__main__":
             take_action("B") # Send a safe default action
             action_history.append("LLM provided invalid action.")
         time.sleep(5) # Delay to prevent spamming the API and to give the game time to react
+
