@@ -64,7 +64,7 @@ def construct_prompt(game_state, history):
         return None
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
-You are playing cautiously. You will be provied a screenshot of the game screen.Dont get stuyck, look at the history to be unstuck.
+You are playing cautiously. You will be provied a screenshot of the game screen. Dont get stuck, look at the history to be unstuck.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -97,16 +97,16 @@ def query_ollama(prompt, image):
     print("---------------------")
     # Send a message with text and image  
     response = ollama.chat(  
-        model='gemma3n',  # Assuming this is your model name  
+        model='hf.co/unsloth/Qwen2.5-Omni-7B-GGUF:Q4_K_M',  # Assuming this is your model name  
         messages=[  
             {  
                 'role': 'user',  
                 'content': prompt,  
-                'images': ['game_screen.png']  # Can be file path, bytes, or base64  
+                # 'images': ['game_screen.png']  # Can be file path, bytes, or base64  
             }  
         ]  
     )  
-    
+    print(response)
     print(response.message.content)
     return response.message.content.strip().lower()
 
