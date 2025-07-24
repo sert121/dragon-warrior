@@ -7,8 +7,14 @@ import ollama
 import os
 import json
 from collections import deque
+from dotenv import load_dotenv # NEW: Import the library
+import os
+from cerebras.cloud.sdk import Cerebras
 
-# --- 1. CONFIGURATION ---
+
+# NEW: Load the environment variables from your .env.local file
+load_dotenv(dotenv_path='.env.local')
+
 
 # -- File Paths (macOS) --
 base_folder = os.path.expanduser('~/Library/Application Support/Mesen2/LuaScriptData/dq1/')
@@ -78,6 +84,7 @@ def capture_screen():
         frame = np.array(sct_img)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
+
 def construct_prompt(game_state, history):
     """MODIFIED: Builds a prompt asking for a high-level macro."""
     if not game_state:
@@ -100,10 +107,9 @@ Current Status:
 - Map ID: {game_state.get('map_id', 'N/A')} (0 is Overworld)
 - Enemy HP: {game_state.get('enemy_hp', 'N/A')} (0 means no battle)
 
-Recent History (last 3 high-level actions):
+Recent Actions:
 {history}
 
-Your Task:
 Based on the screenshot and status, choose the best high-level action to perform right now.
 
 Available Actions:
@@ -114,32 +120,21 @@ Example: {{"action": "TALK"}}
 """
     return prompt
 
-def query_llm(prompt, image):
-    """MODIFIED: Sends the prompt and image to the local Ollama model."""
-    # Save the image to a temporary file for Ollama
-    temp_image_path = "game_screen.png"
-    cv2.imwrite(temp_image_path, image)
-    
-    print("--- PROMPT TO LLM ---")
-    print(prompt)
-    print("---------------------")
+def query_cerebras(prompt, image):
+    client = Cerebras(
+    api_key=os.environ.get("CEREBRAS_API_KEY"),
+    )
 
-    try:
-        response = ollama.chat(
-            model=OLLAMA_MODEL,
-            messages=[
-                {
-                    'role': 'user',
-                    'content': prompt,
-                    'images': [temp_image_path] # Pass the image path
-                }
-            ]
-        )
-        # Return the raw string content for parsing
-        return response['message']['content'].strip()
-    except Exception as e:
-        print(f"Error querying Ollama: {e}")
-        return '{ "action": "EXIT_MENU" }' # Default to a safe action on error
+    chat_completion = client.chat.completions.create(
+    messages=[
+    {"role": "user", "content": prompt, "images": ["game_screen.png"]}
+    ],
+    model="llama-4-scout-17b-16e-instruct",
+    )
+
+    response = chat_completion.choices[0].message.content
+    return response.strip().lower()
+
 
 def write_action_to_file(action):
     """NEW: A simple helper to write a single button press to the action file."""
@@ -177,7 +172,8 @@ def execute_macro(llm_response_str):
 
 # --- 3. THE MAIN LOOP ---
 if __name__ == "__main__":
-    action_history = deque(maxlen=3)
+
+    action_history = deque(maxlen=10)
     print("Starting LLM Agent for Dragon Quest 1 (Macro Execution Mode)...")
     print(f"Using local model: {OLLAMA_MODEL}")
     print("Ensure Mesen 2 is running with the Lua script and Ollama is running.")
@@ -198,7 +194,7 @@ if __name__ == "__main__":
             continue
 
         # 3. Ask the LLM for a Decision (which returns a JSON string)
-        llm_json_response = query_llm(prompt, image)
+        llm_json_response = query_cerebras(prompt, image)
 
         # 4. Execute the Chosen Macro
         executed_action = execute_macro(llm_json_response)
