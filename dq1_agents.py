@@ -7,8 +7,6 @@ import openai
 import os
 from collections import deque
 from dotenv import load_dotenv # NEW: Import the library
-import ollama  
-from ollama import Image  
 import os
 from cerebras.cloud.sdk import Cerebras
 
@@ -59,7 +57,7 @@ def capture_and_ocr_screen():
             text = ""
         return color_frame, text
 
-def construct_prompt(game_state, history):
+def construct_prompt(game_state, history,history_actions):
     """Builds a detailed prompt for the LLM."""
     if not game_state:
         return None
@@ -76,9 +74,10 @@ Current Status:
 - Map ID: {game_state.get('map_id', 'N/A')} (0 is Overworld)
 - Enemy HP: {game_state.get('enemy_hp', 'N/A')} (0 means no battle)
 
-Recent History (last 3 actions):
+Recent Stats:
 {history}
 
+Recent Actions:
 Your Task:
 Based on everything you see, what is the single best button to press right now?
 The available buttons are: [up, down, left, right, a, b]
@@ -98,29 +97,6 @@ Respond ONLY with a single word for the button to press. For example: a
 """
     return prompt
 
-def query_ollama(prompt, image):
-    """Sends the prompt to ollama model gets a response via """
-    # save the image to a file
-    cv2.imwrite("game_screen.png", image)
-    print("--- PROMPT TO LLM ---")
-    print(prompt)
-    print("---------------------")
-    # Send a message with text and image  
-    response = ollama.chat(  
-        model='',  # Assuming this is your model name  
-        messages=[  
-            {  
-                'role': 'user',  
-                'content': prompt,  
-                'images': ['game_screen.png']  # Can be file path, bytes, or base64  
-            }  
-        ]  
-    )  
-    
-    print(response.message.content)
-    return response.message.content.strip().lower()
-
-
 def query_cerebras(prompt, image):
     client = Cerebras(
     api_key=os.environ.get("CEREBRAS_API_KEY"),
@@ -135,7 +111,6 @@ def query_cerebras(prompt, image):
 
     response = chat_completion.choices[0].message.content
     return response.strip().lower()
-    
 
 def take_action(action):
     """Writes the chosen action to the action file for Lua to read."""
@@ -147,7 +122,7 @@ def take_action(action):
 
 # --- 3. THE MAIN LOOP ---
 if __name__ == "__main__":
-    action_history = deque(maxlen=3)
+    action_history = deque(maxlen=10)
     print("Ensure Mesen 2 is running with the Lua script.")
     time.sleep(3)
     while True:
