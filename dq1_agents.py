@@ -42,20 +42,21 @@ ACTION_MACROS = {
     # --- Field Menu Macros (for outside of battle) ---
     # NOTE: These all assume you start by pressing 'A' to open the command window.
     "TALK":         ["a", "a"],
-    "CHECK_STATUS": ["a", "down", "a"],
-    "GO_STAIRS":    ["a", "down", "down", "a"],
-    "SEARCH":       ["a", "down", "down", "down", "a"],
-    "OPEN_SPELL_MENU": ["a", "right", "a"],
-    "OPEN_ITEM_MENU":  ["a", "down", "right", "a"],
-    "OPEN_DOOR":    ["a", "down", "down", "right", "a"],
-    "TAKE_TREASURE": ["a", "down", "down", "down", "right", "a"],
+    "CHECK_STATUS": ["a", "menu-down", "a"],
+    "GO_STAIRS":    ["a", "menu-down", "menu-down", "a"],
+    "SEARCH":       ["a", "menu-down", "menu-down", "menu-down", "a"],
+    "OPEN_SPELL_MENU": ["a", "menu-right", "a"],
+    "OPEN_ITEM_MENU":  ["a", "menu-down", "menu-right", "a"],
+    "OPEN_DOOR":    ["a", "menu-down", "menu-down", "menu-right", "a"],
+    "TAKE_TREASURE": ["a", "menu-down", "menu-down", "menu-down", "menu-right", "a"],
+    "GO_DOWN_IN_DIALOGUE": ["a"],
 
     # --- Battle Menu Macros ---
     # Assumes the battle menu is already open.
     "BATTLE_FIGHT": ["a"],
-    "BATTLE_RUN":   ["right", "right", "a"],
-    "BATTLE_SPELL": ["right", "a"],
-    "BATTLE_ITEM":  ["right", "right", "right", "a"]
+    "BATTLE_RUN":   ["menu-right", "menu-right", "a"],
+    "BATTLE_SPELL": ["menu-right", "a"],
+    "BATTLE_ITEM":  ["menu-right", "menu-right", "menu-right", "a"]
 }
 
 # --- 2. HELPER FUNCTIONS ---
@@ -96,7 +97,10 @@ def construct_prompt(game_state, history):
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
 You are playing cautiously. You will be provided a screenshot of the game. Analyze it carefully.
+You are the best player in the world at this game, so please navigate it accordingly.
+
 Look at the history to avoid getting stuck in loops.
+Also if youre in a dialogue, you can only use the GO_DOWN_IN_DIALOGUE macro.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -111,12 +115,39 @@ Recent Actions:
 {history}
 
 Based on the screenshot and status, choose the best high-level action to perform right now.
+You shall be provided an macro dictionary only choose macros from that dictionary.
 
 Available Actions:
-{available_macros}
 
-Respond ONLY with a JSON object containing your choice.
-Example: {{"action": "TALK"}}
+    # --- Simple Actions ---
+    "go_down_in_dialogue": go down in the dialogue
+    "move_up":    moves up one tile in the game
+    "move_down":  moves down one tile in the game
+    "move_left":  moves left one tile in the game
+    "move_right": moves right one tile in the game
+    "exit_menu":  moves out of the menu
+
+    # --- Field Menu Macros  ---
+    # NOTE: These all assume you start by pressing 'A' to open the command window.
+    "talk":         talk to the NPC
+    "check_status": check your status for the battle
+    "go_stairs":    go down the stairs
+    "search":       search the area
+    "open_spell_menu": open the spell menu
+    "open_item_menu":  open the item menu
+    "open_door":    open the door
+    "take_treasure": take the treasure
+
+    # --- Battle Menu Macros ---
+    # Assumes the battle menu is already open.
+    "battle_fight": fight the enemy
+    "battle_run":   run from the battle
+    "battle_spell": use a spell
+    "battle_item":  use an item
+
+PLease remember Also if youre in a dialogue, you can only use the go_down_in_dialogue macro, a dialogue is when you see a message box and a down arrow.
+Respond with your best action. wrap it in tags of <action> and </action>
+Example: <action>talk</action>
 """
     return prompt
 
@@ -148,8 +179,15 @@ def execute_macro(llm_response_str):
     """NEW: The Macro Executor function."""
     try:
         # Step 1: Parse the JSON response from the LLM
-        action_data = json.loads(llm_response_str)
-        action_key = action_data.get('action')
+        print(llm_response_str)
+        # Extract action from <ACTION> tags
+        import re
+        action_match = re.search(r'<action>(.*?)</action>', llm_response_str, re.IGNORECASE)
+        if not action_match:
+            print("No <action> tags found in response")
+        
+            
+        action_key = action_match.group(1).upper()
 
         if action_key and action_key in ACTION_MACROS:
             # Step 2: Look up the button sequence in our dictionary
