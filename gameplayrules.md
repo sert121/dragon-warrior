@@ -42,6 +42,7 @@ ACTION_MACROS = {
     "BATTLE_ITEM":  ["RIGHT", "RIGHT", "RIGHT", "A"] # Right -> Right -> Right -> A (Selects ITEM)
 }
     #-----Conversation----
-    "TALK": {"A"}
-    "SEQUENCE_TALK": ["A", "A"]                 # PRESS A until Downward Arrow Key no longer visible in Dialogue Box
-    
+    "TALK": ["A"],
+    "SEQUENCE_TALK": ["A", "A"],                # PRESS A until Downward Arrow Key no longer visible in Dialogue Box
+    "CHOOSE_OPTION_YES": ["A"],                 # A (select YES)
+    "CHOOSE_OPTION_NO": ["DOWN", "A"],          # Down -> A (selects NO)
