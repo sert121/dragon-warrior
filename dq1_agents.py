@@ -11,6 +11,9 @@ from dotenv import load_dotenv # NEW: Import the library
 import os
 from cerebras.cloud.sdk import Cerebras
 
+from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+
+
 
 # NEW: Load the environment variables from your .env.local file
 load_dotenv(dotenv_path='.env.local')
@@ -78,13 +81,28 @@ def read_game_state():
         return None
     return state
 
+def get_window_bbox(app_name="Mesen"):
+    window_list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+    for window in window_list:
+        name = window.get('kCGWindowName', '')
+        owner = window.get('kCGWindowOwnerName', '')
+        bounds = window.get('kCGWindowBounds', {})
+        if app_name.lower() in owner.lower():
+            x, y = int(bounds['X']), int(bounds['Y'])
+            w, h = int(bounds['Width']), int(bounds['Height'])
+            return {"top": y, "left": x, "width": w, "height": h}
+    return None
+
 def capture_screen():
-    """Captures the game screen and returns the color image."""
+    region = get_window_bbox("Mesen")
+    if not region:
+        print("Mesen window not found!")
+        return None
+
     with mss.mss() as sct:
-        sct_img = sct.grab(MONITOR_REGION)
+        sct_img = sct.grab(region)
         frame = np.array(sct_img)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
 
 def construct_prompt(game_state, history):
     """MODIFIED: Builds a prompt asking for a high-level macro."""
@@ -101,6 +119,9 @@ You are the best player in the world at this game, so please navigate it accordi
 
 Look at the history to avoid getting stuck in loops.
 Also if youre in a dialogue, you can only use the GO_DOWN_IN_DIALOGUE macro.
+
+Basic Rules:
+- If you are infront of a door 
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -132,7 +153,7 @@ Available Actions:
     "talk":         talk to the NPC
     "check_status": check your status for the battle
     "go_stairs":    go down the stairs
-    "search":       search the area
+    "search":       search an item or treasure(very obscure or rare to use)
     "open_spell_menu": open the spell menu
     "open_item_menu":  open the item menu
     "open_door":    open the door
@@ -224,6 +245,7 @@ if __name__ == "__main__":
             time.sleep(1)
             continue
         image = capture_screen()
+        cv2.imwrite("game_screen.png", image)
 
         # 2. Construct Prompt for a High-Level Action
         prompt = construct_prompt(game_state, list(action_history))
