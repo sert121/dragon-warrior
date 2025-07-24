@@ -120,33 +120,34 @@ You shall be provided an macro dictionary only choose macros from that dictionar
 Available Actions:
 
     # --- Simple Actions ---
-    "MOVE_UP":    moves up one tile in the game
-    "MOVE_DOWN":  moves down one tile in the game
-    "MOVE_LEFT":  moves left one tile in the game
-    "MOVE_RIGHT": moves right one tile in the game
-    "EXIT_MENU":  moves out of the menu or 
+    "go_down_in_dialogue": go down in the dialogue
+    "move_up":    moves up one tile in the game
+    "move_down":  moves down one tile in the game
+    "move_left":  moves left one tile in the game
+    "move_right": moves right one tile in the game
+    "exit_menu":  moves out of the menu
 
-    # --- Field Menu Macros (for outside of battle) ---
+    # --- Field Menu Macros  ---
     # NOTE: These all assume you start by pressing 'A' to open the command window.
-    "TALK":         talk to the NPC
-    "CHECK_STATUS": check your status for the battle
-    "GO_STAIRS":    go down the stairs
-    "SEARCH":       search the area
-    "OPEN_SPELL_MENU": open the spell menu
-    "OPEN_ITEM_MENU":  open the item menu
-    "OPEN_DOOR":    open the door
-    "TAKE_TREASURE": take the treasure
-    "GO_DOWN_IN_DIALOGUE": go down in the dialogue
+    "talk":         talk to the NPC
+    "check_status": check your status for the battle
+    "go_stairs":    go down the stairs
+    "search":       search the area
+    "open_spell_menu": open the spell menu
+    "open_item_menu":  open the item menu
+    "open_door":    open the door
+    "take_treasure": take the treasure
 
     # --- Battle Menu Macros ---
     # Assumes the battle menu is already open.
-    "BATTLE_FIGHT": fight the enemy
-    "BATTLE_RUN":   run from the battle
-    "BATTLE_SPELL": use a spell
-    "BATTLE_ITEM":  use an item
+    "battle_fight": fight the enemy
+    "battle_run":   run from the battle
+    "battle_spell": use a spell
+    "battle_item":  use an item
 
-Respond ONLY with a JSON object containing your choice.
-Example: {{"action": "TALK"}}
+PLease remember Also if youre in a dialogue, you can only use the go_down_in_dialogue macro, a dialogue is when you see a message box and a down arrow.
+Respond with your best action. wrap it in tags of <action> and </action>
+Example: <action>talk</action>
 """
     return prompt
 
@@ -178,8 +179,15 @@ def execute_macro(llm_response_str):
     """NEW: The Macro Executor function."""
     try:
         # Step 1: Parse the JSON response from the LLM
-        action_data = json.loads(llm_response_str)
-        action_key = action_data.get('action').upper()
+        print(llm_response_str)
+        # Extract action from <ACTION> tags
+        import re
+        action_match = re.search(r'<action>(.*?)</action>', llm_response_str, re.IGNORECASE)
+        if not action_match:
+            print("No <action> tags found in response")
+        
+            
+        action_key = action_match.group(1).upper()
 
         if action_key and action_key in ACTION_MACROS:
             # Step 2: Look up the button sequence in our dictionary
