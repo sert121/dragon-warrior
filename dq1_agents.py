@@ -42,20 +42,21 @@ ACTION_MACROS = {
     # --- Field Menu Macros (for outside of battle) ---
     # NOTE: These all assume you start by pressing 'A' to open the command window.
     "TALK":         ["a", "a"],
-    "CHECK_STATUS": ["a", "down", "a"],
-    "GO_STAIRS":    ["a", "down", "down", "a"],
-    "SEARCH":       ["a", "down", "down", "down", "a"],
-    "OPEN_SPELL_MENU": ["a", "right", "a"],
-    "OPEN_ITEM_MENU":  ["a", "down", "right", "a"],
-    "OPEN_DOOR":    ["a", "down", "down", "right", "a"],
-    "TAKE_TREASURE": ["a", "down", "down", "down", "right", "a"],
+    "CHECK_STATUS": ["a", "menu-down", "a"],
+    "GO_STAIRS":    ["a", "menu-down", "menu-down", "a"],
+    "SEARCH":       ["a", "menu-down", "menu-down", "menu-down", "a"],
+    "OPEN_SPELL_MENU": ["a", "menu-right", "a"],
+    "OPEN_ITEM_MENU":  ["a", "menu-down", "menu-right", "a"],
+    "OPEN_DOOR":    ["a", "menu-down", "menu-down", "menu-right", "a"],
+    "TAKE_TREASURE": ["a", "menu-down", "menu-down", "menu-down", "menu-right", "a"],
+    "GO_DOWN_IN_DIALOGUE": ["a"],
 
     # --- Battle Menu Macros ---
     # Assumes the battle menu is already open.
     "BATTLE_FIGHT": ["a"],
-    "BATTLE_RUN":   ["right", "right", "a"],
-    "BATTLE_SPELL": ["right", "a"],
-    "BATTLE_ITEM":  ["right", "right", "right", "a"]
+    "BATTLE_RUN":   ["menu-right", "menu-right", "a"],
+    "BATTLE_SPELL": ["menu-right", "a"],
+    "BATTLE_ITEM":  ["menu-right", "menu-right", "menu-right", "a"]
 }
 
 # --- 2. HELPER FUNCTIONS ---
@@ -96,7 +97,10 @@ def construct_prompt(game_state, history):
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
 You are playing cautiously. You will be provided a screenshot of the game. Analyze it carefully.
+You are the best player in the world at this game, so please navigate it accordingly.
+
 Look at the history to avoid getting stuck in loops.
+Also if youre in a dialogue, you can only use the GO_DOWN_IN_DIALOGUE macro.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -111,9 +115,35 @@ Recent Actions:
 {history}
 
 Based on the screenshot and status, choose the best high-level action to perform right now.
+You shall be provided an macro dictionary only choose macros from that dictionary.
 
 Available Actions:
-{available_macros}
+
+    # --- Simple Actions ---
+    "MOVE_UP":    moves up one tile in the game
+    "MOVE_DOWN":  moves down one tile in the game
+    "MOVE_LEFT":  moves left one tile in the game
+    "MOVE_RIGHT": moves right one tile in the game
+    "EXIT_MENU":  moves out of the menu or 
+
+    # --- Field Menu Macros (for outside of battle) ---
+    # NOTE: These all assume you start by pressing 'A' to open the command window.
+    "TALK":         talk to the NPC
+    "CHECK_STATUS": check your status for the battle
+    "GO_STAIRS":    go down the stairs
+    "SEARCH":       search the area
+    "OPEN_SPELL_MENU": open the spell menu
+    "OPEN_ITEM_MENU":  open the item menu
+    "OPEN_DOOR":    open the door
+    "TAKE_TREASURE": take the treasure
+    "GO_DOWN_IN_DIALOGUE": go down in the dialogue
+
+    # --- Battle Menu Macros ---
+    # Assumes the battle menu is already open.
+    "BATTLE_FIGHT": fight the enemy
+    "BATTLE_RUN":   run from the battle
+    "BATTLE_SPELL": use a spell
+    "BATTLE_ITEM":  use an item
 
 Respond ONLY with a JSON object containing your choice.
 Example: {{"action": "TALK"}}
@@ -149,7 +179,7 @@ def execute_macro(llm_response_str):
     try:
         # Step 1: Parse the JSON response from the LLM
         action_data = json.loads(llm_response_str)
-        action_key = action_data.get('action')
+        action_key = action_data.get('action').upper()
 
         if action_key and action_key in ACTION_MACROS:
             # Step 2: Look up the button sequence in our dictionary
