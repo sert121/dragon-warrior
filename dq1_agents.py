@@ -63,7 +63,7 @@ def construct_prompt(game_state, history,history_actions):
         return None
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
-You are playing cautiously. You will be provied a screenshot of the game screen.Dont get stuyck, look at the history to be unstuck.
+You are playing cautiously. You will be provied a screenshot of the game screen. Dont get stuck, look at the history to be unstuck.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
