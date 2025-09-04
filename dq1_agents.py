@@ -9,11 +9,12 @@ import json
 from collections import deque
 from dotenv import load_dotenv # NEW: Import the library
 import os
+import re
 from cerebras.cloud.sdk import Cerebras
+from openai import OpenAI
+import base64
 
 from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-
-
 
 # NEW: Load the environment variables from your .env.local file
 load_dotenv(dotenv_path='.env.local')
@@ -51,7 +52,7 @@ ACTION_MACROS = {
     "OPEN_SPELL_MENU": ["a", "menu-right", "a"],
     "OPEN_ITEM_MENU":  ["a", "menu-down", "menu-right", "a"],
     "OPEN_DOOR":    ["a", "menu-down", "menu-down", "menu-right", "a"],
-    "TAKE_TREASURE": ["a", "menu-down", "menu-down", "menu-down", "menu-right", "a"],
+    "TAKE": ["a", "menu-down", "menu-down", "menu-down", "menu-right", "a"],
     "GO_DOWN_IN_DIALOGUE": ["a"],
 
     # --- Battle Menu Macros ---
@@ -104,7 +105,45 @@ def capture_screen():
         frame = np.array(sct_img)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-def construct_prompt(game_state, history):
+def check_for_dialogue():
+    """Checks if the image contains dialogue text and extracts it."""
+    prompt = """
+    Look at this screenshot from Dragon Quest 1 (NES). 
+    1.Is there any dialogue/text box visible in the image? It should be a message box and a down arrow, and there should be text in the message box, ideally more than 1 line.
+    2. If yes, what does the text say? Extract and return the text content.
+    3. If it doesnt have dialogue, return no.
+    
+    Format your response in <dialogue> tags.
+
+    <dialogue>
+    Mary had three children they were very happy.
+    </dialogue>
+    """
+
+    client = Cerebras(
+        api_key=os.environ.get("CEREBRAS_API_KEY"),
+    )
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "user", "content": prompt, "images": ["game_screen.png"]}
+        ],
+        model="llama-4-scout-17b-16e-instruct",
+    )
+    response = chat_completion.choices[0].message.content
+    
+    # Extract text between dialogue tags if present
+    dialogue_match = re.search(r'<dialogue>(.*?)</dialogue>', response, re.DOTALL)
+    if dialogue_match and dialogue_match.group(1).strip():
+        text = dialogue_match.group(1).strip()
+        if text.lower() == "no":
+            return None
+        else:
+            return text
+    else:
+        return None
+
+def construct_prompt(game_state, history, dialogue_history):
     """MODIFIED: Builds a prompt asking for a high-level macro."""
     if not game_state:
         return None
@@ -114,33 +153,32 @@ def construct_prompt(game_state, history):
 
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
-You are playing cautiously. You will be provided a screenshot of the game. Analyze it carefully.
-You are the best player in the world at this game, so please navigate it accordingly.
-
+You are playing as an adventurer. You will be provided a screenshot of the game. Analyze it carefully.
+You are the best player in the world at this game, so please navigate it accordingly. You need to move through doors, and may need keys that youll find in chests.
 Look at the history to avoid getting stuck in loops.
+Look at the map, try to explore all the grid cells if youre stuck.
+If youre facing the wall, try to move away and explore an exit/nearest item you can interact with.
+You should ideally keep moving and take fresh new actions/conversations in 10 states or more, if not youre doing somethning wrong.
 Also if youre in a dialogue, you can only use the GO_DOWN_IN_DIALOGUE macro.
 
 Basic Rules:
 - If you are infront of a door 
 
-Current Status:
-- HP: {game_state.get('hp', 'N/A')}
-- MP: {game_state.get('mp', 'N/A')}
-- Gold: {game_state.get('gold', 'N/A')}
-- Level: {game_state.get('level', 'N/A')}
-- Position: ({game_state.get('px', 'N/A')}, {game_state.get('py', 'N/A')})
-- Map ID: {game_state.get('map_id', 'N/A')} (0 is Overworld)
-- Enemy HP: {game_state.get('enemy_hp', 'N/A')} (0 means no battle)
 
 Recent Actions:
 {history}
+
+Recent Dialogue:
+{dialogue_history}
+
+HINT: Check on your last conversations/dialogue to get unstuck
 
 Based on the screenshot and status, choose the best high-level action to perform right now.
 You shall be provided an macro dictionary only choose macros from that dictionary.
 
 Available Actions:
 
-    # --- Simple Actions ---
+# --- Simple Actions ---
     "go_down_in_dialogue": go down in the dialogue
     "move_up":    moves up one tile in the game
     "move_down":  moves down one tile in the game
@@ -150,14 +188,17 @@ Available Actions:
 
     # --- Field Menu Macros  ---
     # NOTE: These all assume you start by pressing 'A' to open the command window.
+    "take": take something from the object youre interacting with
     "talk":         talk to the NPC
     "check_status": check your status for the battle
     "go_stairs":    go down the stairs
-    "search":       search an item or treasure(very obscure or rare to use)
     "open_spell_menu": open the spell menu
     "open_item_menu":  open the item menu
     "open_door":    open the door
-    "take_treasure": take the treasure
+
+    # --- Misc Menu Macros -- 
+    "search": try to find things when you dont have any other option (very obscure or rare to use, only use if you have no other options)
+
 
     # --- Battle Menu Macros ---
     # Assumes the battle menu is already open.
@@ -166,26 +207,65 @@ Available Actions:
     "battle_spell": use a spell
     "battle_item":  use an item
 
-PLease remember Also if youre in a dialogue, you can only use the go_down_in_dialogue macro, a dialogue is when you see a message box and a down arrow.
+PLease remember also if youre in a dialogue, you can only use the go_down_in_dialogue macro, a dialogue is when you see a message box and a down arrow.
+When you are in the command menu, to go back press exit_menu
+When you are done with the dialogue you need to explore the area and also take actions to progress. Around you need to:
+- Move around
+- Explore the area
+- Talk to other NPCs
+- Take actions like opening a door, taking the stairs, and taking treasure from the chests.
+- Remember to interact with objects as well, use TAKE or 
+Dont get stuck taking the same action if you are not in the dialogue.
 Respond with your best action. wrap it in tags of <action> and </action>
 Example: <action>talk</action>
 """
     return prompt
 
+def query_llm(prompt,img):
+    with open("game_screen.png", "rb") as image_file:  
+        b64_image = base64.b64encode(image_file.read()).decode("utf-8")  
+  
+    client = client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key="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")
+    response =  None
+    
+    try:
+        response = client.chat.completions.create(
+            model="google/gemini-2.5-flash-lite",
+            messages=[
+                {"role": "user", "content":[
+                {"type": "text", "text": prompt},
+                {"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"},
+                ]}],
+        )
+        print('MODEL RESPONSE', response)
+        action = response.choices[0].message.content.strip().lower()
+    except Exception as e:
+        print(e)
+        return ''
+    return action
+
+
 def query_cerebras(prompt, image):
     client = Cerebras(
     api_key=os.environ.get("CEREBRAS_API_KEY"),
     )
+    try:
+        chat_completion = client.chat.completions.create(
+        messages=[
+        {"role": "system", "content": "You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord. You are playing as an adventurer. You will be provided a screenshot of the game. Analyze it carefully. You are the best player in the world at this game, so please navigate it accordingly."},
+        {"role": "user", "content": prompt, "images": ["game_screen.png"]}
+        ],
+        model="llama-4-scout-17b-16e-instruct",
+        )
 
-    chat_completion = client.chat.completions.create(
-    messages=[
-    {"role": "user", "content": prompt, "images": ["game_screen.png"]}
-    ],
-    model="llama-4-scout-17b-16e-instruct",
-    )
-
-    response = chat_completion.choices[0].message.content
-    return response.strip().lower()
+        response = chat_completion.choices[0].message.content
+        response = response.strip().lower()
+        print(response)
+        return response
+    except:
+        return ''
+    
+    return response
 
 
 def write_action_to_file(action):
@@ -200,13 +280,13 @@ def execute_macro(llm_response_str):
     """NEW: The Macro Executor function."""
     try:
         # Step 1: Parse the JSON response from the LLM
-        print(llm_response_str)
+        # print(llm_response_str)
         # Extract action from <ACTION> tags
         import re
         action_match = re.search(r'<action>(.*?)</action>', llm_response_str, re.IGNORECASE)
         if not action_match:
             print("No <action> tags found in response")
-        
+            return None
             
         action_key = action_match.group(1).upper()
 
@@ -232,12 +312,11 @@ def execute_macro(llm_response_str):
 # --- 3. THE MAIN LOOP ---
 if __name__ == "__main__":
 
-    action_history = deque(maxlen=10)
+    action_history = deque(maxlen=100)
+    dialogue_history = deque(maxlen=100)
     print("Starting LLM Agent for Dragon Quest 1 (Macro Execution Mode)...")
-    print(f"Using local model: {OLLAMA_MODEL}")
-    print("Ensure Mesen 2 is running with the Lua script and Ollama is running.")
     time.sleep(3)
-
+    img_count = 0
     while True:
         # 1. Read State and See Screen
         game_state = read_game_state()
@@ -245,23 +324,32 @@ if __name__ == "__main__":
             time.sleep(1)
             continue
         image = capture_screen()
-        cv2.imwrite("game_screen.png", image)
+        cv2.imwrite("game_screen.png", image) # for game state reading
+        cv2.imwrite(f"game_state_folder/game_screen_{img_count}.png", image)  # for logging purposes
+        img_count += 1
+
+
+        dialogue = check_for_dialogue()
+        if dialogue:
+            print(f"DIALOGUE: {dialogue}")
+            dialogue_history.append(dialogue)
 
         # 2. Construct Prompt for a High-Level Action
-        prompt = construct_prompt(game_state, list(action_history))
+        prompt = construct_prompt(game_state, list(action_history), dialogue_history)
         if not prompt:
             time.sleep(1)
             continue
 
         # 3. Ask the LLM for a Decision (which returns a JSON string)
-        llm_json_response = query_cerebras(prompt, image)
+        llm_json_response = query_llm(prompt, image)
+
 
         # 4. Execute the Chosen Macro
         executed_action = execute_macro(llm_json_response)
         
         # 5. Update History
         if executed_action:
-            action_history.append(f"Action: {executed_action}, HP: {game_state.get('hp')}")
+            action_history.append(f"Action: {executed_action}, PX: {game_state.get('px')}, PY: {game_state.get('py')}")
             print(f"MACRO EXECUTED: {executed_action}\n")
         else:
             print("Macro execution failed. Doing nothing this turn.")
