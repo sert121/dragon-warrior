@@ -11,9 +11,6 @@ from dotenv import load_dotenv # NEW: Import the library
 import os
 from cerebras.cloud.sdk import Cerebras
 
-from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
-
-
 
 # NEW: Load the environment variables from your .env.local file
 load_dotenv(dotenv_path='.env.local')
@@ -29,7 +26,7 @@ MONITOR_REGION = {"top": 40, "left": 0, "width": 512, "height": 480} # Adjust to
 
 # -- Ollama Configuration --
 # MODIFIED: Ensure your model name is correct for your local Ollama instance
-OLLAMA_MODEL = 'hf.co/unsloth/Qwen2.5-Omni-7B-GGUF:Q4_K_M'
+#OLLAMA_MODEL = 'hf.co/unsloth/Qwen2.5-Omni-7B-GGUF:Q4_K_M'
 
 # --- NEW: MACRO DICTIONARY (THE "INPUT TREE") ---
 # This dictionary translates a high-level action into a sequence of low-level button presses
@@ -45,21 +42,25 @@ ACTION_MACROS = {
     # --- Field Menu Macros (for outside of battle) ---
     # NOTE: These all assume you start by pressing 'A' to open the command window.
     "TALK":         ["a", "a"],
-    "CHECK_STATUS": ["a", "menu-down", "a"],
-    "GO_STAIRS":    ["a", "menu-down", "menu-down", "a"],
-    "SEARCH":       ["a", "menu-down", "menu-down", "menu-down", "a"],
-    "OPEN_SPELL_MENU": ["a", "menu-right", "a"],
-    "OPEN_ITEM_MENU":  ["a", "menu-down", "menu-right", "a"],
-    "OPEN_DOOR":    ["a", "menu-down", "menu-down", "menu-right", "a"],
-    "TAKE_TREASURE": ["a", "menu-down", "menu-down", "menu-down", "menu-right", "a"],
-    "GO_DOWN_IN_DIALOGUE": ["a"],
+    "CHECK_STATUS": ["a", "down", "a"],
+    "GO_STAIRS":    ["a", "down", "down", "a"],
+    "SEARCH":       ["a", "down", "down", "down", "a"],
+    "OPEN_SPELL_MENU": ["a", "right", "a"],
+    "OPEN_ITEM_MENU":  ["a", "down", "right", "a"],
+    "OPEN_DOOR":    ["a", "down", "down", "right", "a"],
+    "TAKE_TREASURE": ["a", "down", "down", "down", "right", "a"],
 
     # --- Battle Menu Macros ---
     # Assumes the battle menu is already open.
     "BATTLE_FIGHT": ["a"],
-    "BATTLE_RUN":   ["menu-right", "menu-right", "a"],
-    "BATTLE_SPELL": ["menu-right", "a"],
-    "BATTLE_ITEM":  ["menu-right", "menu-right", "menu-right", "a"]
+    "BATTLE_RUN":   ["right", "right", "a"],
+    "BATTLE_SPELL": ["right", "a"],
+    "BATTLE_ITEM":  ["right", "right", "right", "a"]
+
+    #-----Conversation----
+    "TALK": ["a"],
+    "CHOOSE_OPTION_YES": ["a"],                 # A (select YES)
+    "CHOOSE_OPTION_NO": ["down", "a"],          # Down -> A (selects NO)
 }
 
 # --- 2. HELPER FUNCTIONS ---
@@ -81,28 +82,13 @@ def read_game_state():
         return None
     return state
 
-def get_window_bbox(app_name="Mesen"):
-    window_list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
-    for window in window_list:
-        name = window.get('kCGWindowName', '')
-        owner = window.get('kCGWindowOwnerName', '')
-        bounds = window.get('kCGWindowBounds', {})
-        if app_name.lower() in owner.lower():
-            x, y = int(bounds['X']), int(bounds['Y'])
-            w, h = int(bounds['Width']), int(bounds['Height'])
-            return {"top": y, "left": x, "width": w, "height": h}
-    return None
-
 def capture_screen():
-    region = get_window_bbox("Mesen")
-    if not region:
-        print("Mesen window not found!")
-        return None
-
+    """Captures the game screen and returns the color image."""
     with mss.mss() as sct:
-        sct_img = sct.grab(region)
+        sct_img = sct.grab(MONITOR_REGION)
         frame = np.array(sct_img)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
 
 def construct_prompt(game_state, history):
     """MODIFIED: Builds a prompt asking for a high-level macro."""
@@ -115,13 +101,23 @@ def construct_prompt(game_state, history):
     prompt = f"""
 You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
 You are playing cautiously. You will be provided a screenshot of the game. Analyze it carefully.
-You are the best player in the world at this game, so please navigate it accordingly.
-
+Understand all the elements on the screen. Understand the game mechanics. Understand the core game loops. 
+Talk to NPCs in the game to get information. 
 Look at the history to avoid getting stuck in loops.
-Also if youre in a dialogue, you can only use the GO_DOWN_IN_DIALOGUE macro.
 
-Basic Rules:
-- If you are infront of a door 
+Some basic rules for gameplay
+
+Exploration:
+- Move around the world to find chests, enemies, items, etc.
+- When in front of a chest, press TAKE_TREASURE to open it.
+- When in front of a door, press OPEN_DOOR to open it.
+- When in front of an NPC, press TALK to talk to them.
+- To open doors in the game, you need to have magic keys. You can get magic keys by opening chests (in towns & dungeons), killing enemies or finding them in the world.
+- To get more information about quests, world or dungeons in the game, you can talk to NPCs.
+- To recover health, you can go to towns and find an inn. Talk to the innkeeper and rent a room for 10 gold.
+- To buy spells, you can go to towns and find a magic shop. Talk to the magic shopkeeper and buy the spells.
+- To recover MP, you can go to towns and find a magic shop. Talk to the magic shopkeeper and buy a potion.
+- To buy weapons, armor, items, you can go to towns and find a shop. Talk to the shopkeeper and buy the items.
 
 Current Status:
 - HP: {game_state.get('hp', 'N/A')}
@@ -136,39 +132,12 @@ Recent Actions:
 {history}
 
 Based on the screenshot and status, choose the best high-level action to perform right now.
-You shall be provided an macro dictionary only choose macros from that dictionary.
 
 Available Actions:
+{available_macros}
 
-    # --- Simple Actions ---
-    "go_down_in_dialogue": go down in the dialogue
-    "move_up":    moves up one tile in the game
-    "move_down":  moves down one tile in the game
-    "move_left":  moves left one tile in the game
-    "move_right": moves right one tile in the game
-    "exit_menu":  moves out of the menu
-
-    # --- Field Menu Macros  ---
-    # NOTE: These all assume you start by pressing 'A' to open the command window.
-    "talk":         talk to the NPC
-    "check_status": check your status for the battle
-    "go_stairs":    go down the stairs
-    "search":       search an item or treasure(very obscure or rare to use)
-    "open_spell_menu": open the spell menu
-    "open_item_menu":  open the item menu
-    "open_door":    open the door
-    "take_treasure": take the treasure
-
-    # --- Battle Menu Macros ---
-    # Assumes the battle menu is already open.
-    "battle_fight": fight the enemy
-    "battle_run":   run from the battle
-    "battle_spell": use a spell
-    "battle_item":  use an item
-
-PLease remember Also if youre in a dialogue, you can only use the go_down_in_dialogue macro, a dialogue is when you see a message box and a down arrow.
-Respond with your best action. wrap it in tags of <action> and </action>
-Example: <action>talk</action>
+Respond ONLY with a JSON object containing your choice.
+Example: {{"action": "TALK"}}
 """
     return prompt
 
@@ -200,15 +169,8 @@ def execute_macro(llm_response_str):
     """NEW: The Macro Executor function."""
     try:
         # Step 1: Parse the JSON response from the LLM
-        print(llm_response_str)
-        # Extract action from <ACTION> tags
-        import re
-        action_match = re.search(r'<action>(.*?)</action>', llm_response_str, re.IGNORECASE)
-        if not action_match:
-            print("No <action> tags found in response")
-        
-            
-        action_key = action_match.group(1).upper()
+        action_data = json.loads(llm_response_str)
+        action_key = action_data.get('action')
 
         if action_key and action_key in ACTION_MACROS:
             # Step 2: Look up the button sequence in our dictionary
@@ -245,7 +207,6 @@ if __name__ == "__main__":
             time.sleep(1)
             continue
         image = capture_screen()
-        cv2.imwrite("game_screen.png", image)
 
         # 2. Construct Prompt for a High-Level Action
         prompt = construct_prompt(game_state, list(action_history))
