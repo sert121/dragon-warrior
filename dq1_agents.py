@@ -1,6 +1,6 @@
 import time
-import mss
 import cv2
+import mss
 import pytesseract
 import numpy as np
 import ollama
@@ -9,7 +9,6 @@ import json
 from collections import deque
 from dotenv import load_dotenv # NEW: Import the library
 import os
-from cerebras.cloud.sdk import Cerebras
 
 
 # NEW: Load the environment variables from your .env.local file
@@ -55,7 +54,7 @@ ACTION_MACROS = {
     "BATTLE_FIGHT": ["a"],
     "BATTLE_RUN":   ["right", "right", "a"],
     "BATTLE_SPELL": ["right", "a"],
-    "BATTLE_ITEM":  ["right", "right", "right", "a"]
+    "BATTLE_ITEM":  ["right", "right", "right", "a"],
 
     #-----Conversation----
     "TALK": ["a"],
