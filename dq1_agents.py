@@ -151,6 +151,15 @@ def check_for_dialogue(token_counter):
             return text
     return None
 
+
+
+
+
+
+
+
+
+
 def construct_prompt(game_state, history, dialogue_history):
     """MODIFIED: Builds a prompt asking for a high-level macro."""
     if not game_state:
@@ -224,6 +233,49 @@ Dont get stuck taking the same action if you are not in the dialogue.
 Respond with your best action. wrap it in tags of <action> and </action>
 Example: <action>talk</action>
 """
+
+    prompt = f"""
+You are an expert player of the NES game Dragon Quest 1. Your goal is to defeat the Dragonlord.
+You are playing cautiously. You will be provided a screenshot of the game. Analyze it carefully.
+Understand all the elements on the screen. Understand the game mechanics. Understand the core game loops. 
+Talk to NPCs in the game to get information. 
+Look at the history to avoid getting stuck in loops.
+
+Some basic rules for gameplay
+
+Exploration:
+- Move around the world to find chests, enemies, items, etc.
+- When in front of a chest, press TAKE_TREASURE to open it.
+- When in front of a door, press OPEN_DOOR to open it.
+- When in front of an NPC, press TALK to talk to them.
+- To open doors in the game, you need to have magic keys. You can get magic keys by opening chests (in towns & dungeons), killing enemies or finding them in the world.
+- To get more information about quests, world or dungeons in the game, you can talk to NPCs.
+- To recover health, you can go to towns and find an inn. Talk to the innkeeper and rent a room for 10 gold.
+- To buy spells, you can go to towns and find a magic shop. Talk to the magic shopkeeper and buy the spells.
+- To recover MP, you can go to towns and find a magic shop. Talk to the magic shopkeeper and buy a potion.
+- To buy weapons, armor, items, you can go to towns and find a shop. Talk to the shopkeeper and buy the items.
+
+Current Status:
+- HP: {game_state.get('hp', 'N/A')}
+- MP: {game_state.get('mp', 'N/A')}
+- Gold: {game_state.get('gold', 'N/A')}
+- Level: {game_state.get('level', 'N/A')}
+- Position: ({game_state.get('px', 'N/A')}, {game_state.get('py', 'N/A')})
+- Map ID: {game_state.get('map_id', 'N/A')} (0 is Overworld)
+- Enemy HP: {game_state.get('enemy_hp', 'N/A')} (0 means no battle)
+
+Recent Actions:
+{history}
+
+Based on the screenshot and status, choose the best high-level action to perform right now.
+
+Available Actions:
+{available_macros}
+
+Respond ONLY with a JSON object containing your choice.
+Example: {{"action": "TALK"}}
+"""
+   
     return prompt
 
 def query_llm(prompt, img, token_counter):
@@ -317,14 +369,27 @@ def execute_macro(llm_response_str):
     try:
         # Step 1: Parse the JSON response from the LLM
         # print(llm_response_str)
+
         # Extract action from <ACTION> tags
-        import re
-        action_match = re.search(r'<action>(.*?)</action>', llm_response_str, re.IGNORECASE)
-        if not action_match:
-            print("No <action> tags found in response")
-            return None
+        # import re
+        # action_match = re.search(r'<action>(.*?)</action>', llm_response_str, re.IGNORECASE)
+        # if not action_match:
+        #     print("No <action> tags found in response")
+        #     return None
             
-        action_key = action_match.group(1).upper()
+        # action_key = action_match.group(1).upper()
+
+        # Step 1: Parse the JSON response from the LLM
+        
+        action_match = re.search(r'```json(.*?)```', llm_response_str, re.DOTALL)
+        if not action_match:
+            print("No JSON found in response")
+            return None
+
+        json_str = action_match.group(1).strip()
+
+        action_data = json.loads(json_str)
+        action_key = action_data.get('action').upper()
 
         if action_key and action_key in ACTION_MACROS:
             # Step 2: Look up the button sequence in our dictionary
