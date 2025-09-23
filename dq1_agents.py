@@ -13,11 +13,18 @@ import re
 from cerebras.cloud.sdk import Cerebras
 from openai import OpenAI
 import base64
+from helpers import TokenCounter
+import random
+
 
 from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
 
 # NEW: Load the environment variables from your .env.local file
-load_dotenv(dotenv_path='.env.local')
+load_dotenv(dotenv_path='.env')
+random_seed =  random.randint(0, 1000000)
+
+openrouter_key = os.getenv("OPENROUTER_API_KEY")
+client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
 
 
 # -- File Paths (macOS) --
@@ -25,12 +32,6 @@ base_folder = os.path.expanduser('~/Library/Application Support/Mesen2/LuaScript
 STATS_FILE_PATH = os.path.join(base_folder, "dq1_stats.txt")
 ACTION_FILE_PATH = os.path.join(base_folder, "action.txt")
 
-# -- Screen Capture --
-MONITOR_REGION = {"top": 40, "left": 0, "width": 512, "height": 480} # Adjust to your Mesen window
-
-# -- Ollama Configuration --
-# MODIFIED: Ensure your model name is correct for your local Ollama instance
-OLLAMA_MODEL = 'hf.co/unsloth/Qwen2.5-Omni-7B-GGUF:Q4_K_M'
 
 # --- NEW: MACRO DICTIONARY (THE "INPUT TREE") ---
 # This dictionary translates a high-level action into a sequence of low-level button presses
@@ -105,33 +106,41 @@ def capture_screen():
         frame = np.array(sct_img)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-def check_for_dialogue():
+def check_for_dialogue(token_counter):
     """Checks if the image contains dialogue text and extracts it."""
     prompt = """
     Look at this screenshot from Dragon Quest 1 (NES). 
-    1.Is there any dialogue/text box visible in the image? It should be a message box and a down arrow, and there should be text in the message box, ideally more than 1 line.
+    1. Is there any dialogue/text box visible in the image? It should be a message box with a down arrow, ideally more than one line.
     2. If yes, what does the text say? Extract and return the text content.
-    3. If it doesnt have dialogue, return no.
+    3. If no dialogue, return 'no'.
     
-    Format your response in <dialogue> tags.
-
-    <dialogue>
-    Mary had three children they were very happy.
-    </dialogue>
+    Format strictly in <dialogue>...</dialogue>.
     """
 
-    client = Cerebras(
-        api_key=os.environ.get("CEREBRAS_API_KEY"),
-    )
+    # Encode the screenshot as base64
+    with open("game_screen.png", "rb") as f:
+        b64_image = base64.b64encode(f.read()).decode("utf-8")
 
     chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "user", "content": prompt, "images": ["game_screen.png"]}
-        ],
-        model="llama-4-scout-17b-16e-instruct",
+        model="google/gemini-2.5-flash-lite",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"},
+            ],
+        }],
     )
+
+    # Track token usage
+    if hasattr(chat_completion, 'usage') and chat_completion.usage:
+        input_tokens = chat_completion.usage.prompt_tokens
+        output_tokens = chat_completion.usage.completion_tokens
+        token_counter.add_usage(input_tokens, output_tokens)
+        print(f"Dialogue check tokens - Input: {input_tokens}, Output: {output_tokens}")
+
     response = chat_completion.choices[0].message.content
-    
+
     # Extract text between dialogue tags if present
     dialogue_match = re.search(r'<dialogue>(.*?)</dialogue>', response, re.DOTALL)
     if dialogue_match and dialogue_match.group(1).strip():
@@ -140,8 +149,7 @@ def check_for_dialogue():
             return None
         else:
             return text
-    else:
-        return None
+    return None
 
 def construct_prompt(game_state, history, dialogue_history):
     """MODIFIED: Builds a prompt asking for a high-level macro."""
@@ -160,9 +168,6 @@ Look at the map, try to explore all the grid cells if youre stuck.
 If youre facing the wall, try to move away and explore an exit/nearest item you can interact with.
 You should ideally keep moving and take fresh new actions/conversations in 10 states or more, if not youre doing somethning wrong.
 Also if youre in a dialogue, you can only use the GO_DOWN_IN_DIALOGUE macro.
-
-Basic Rules:
-- If you are infront of a door 
 
 
 Recent Actions:
@@ -214,21 +219,23 @@ When you are done with the dialogue you need to explore the area and also take a
 - Explore the area
 - Talk to other NPCs
 - Take actions like opening a door, taking the stairs, and taking treasure from the chests.
-- Remember to interact with objects as well, use TAKE or 
+- Remember to interact with objects as well, use TAKE or OPEN DOOR
 Dont get stuck taking the same action if you are not in the dialogue.
 Respond with your best action. wrap it in tags of <action> and </action>
 Example: <action>talk</action>
 """
     return prompt
 
-def query_llm(prompt,img):
+def query_llm(prompt, img, token_counter):
     with open("game_screen.png", "rb") as image_file:  
         b64_image = base64.b64encode(image_file.read()).decode("utf-8")  
   
-    client = client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key="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")
     response =  None
     
     try:
+        # with open(f"agent_log_{random_seed}.jsonl", "a", encoding="utf-8") as f:
+        #     f.write(json.dumps({"step": "query_llm.request", "prompt": prompt}) + "\n")
+
         response = client.chat.completions.create(
             model="google/gemini-2.5-flash-lite",
             messages=[
@@ -238,14 +245,36 @@ def query_llm(prompt,img):
                 ]}],
         )
         print('MODEL RESPONSE', response)
+        
+        # Track token usage
+        if hasattr(response, 'usage') and response.usage:
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+            token_counter.add_usage(input_tokens, output_tokens)
+
+            with open(f"logs/token_log_{random_seed}.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "step": "query_llm.tokens",
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens
+                }) + "\n")
+
+            print(f"Tokens used - Input: {input_tokens}, Output: {output_tokens}")
+        
         action = response.choices[0].message.content.strip().lower()
+        with open(f"logs/agent_log_{random_seed}.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step": "query_llm.response",
+                "response": action
+            }) + "\n")
+
     except Exception as e:
         print(e)
         return ''
     return action
 
 
-def query_cerebras(prompt, image):
+def query_cerebras(prompt, image, token_counter):
     client = Cerebras(
     api_key=os.environ.get("CEREBRAS_API_KEY"),
     )
@@ -257,6 +286,13 @@ def query_cerebras(prompt, image):
         ],
         model="llama-4-scout-17b-16e-instruct",
         )
+
+        # Track token usage
+        if hasattr(chat_completion, 'usage') and chat_completion.usage:
+            input_tokens = chat_completion.usage.prompt_tokens
+            output_tokens = chat_completion.usage.completion_tokens
+            token_counter.add_usage(input_tokens, output_tokens)
+            print(f"Tokens used - Input: {input_tokens}, Output: {output_tokens}")
 
         response = chat_completion.choices[0].message.content
         response = response.strip().lower()
@@ -312,6 +348,7 @@ def execute_macro(llm_response_str):
 # --- 3. THE MAIN LOOP ---
 if __name__ == "__main__":
 
+    token_counter = TokenCounter()
     action_history = deque(maxlen=100)
     dialogue_history = deque(maxlen=100)
     print("Starting LLM Agent for Dragon Quest 1 (Macro Execution Mode)...")
@@ -329,7 +366,7 @@ if __name__ == "__main__":
         img_count += 1
 
 
-        dialogue = check_for_dialogue()
+        dialogue = check_for_dialogue(token_counter)
         if dialogue:
             print(f"DIALOGUE: {dialogue}")
             dialogue_history.append(dialogue)
@@ -340,11 +377,8 @@ if __name__ == "__main__":
             time.sleep(1)
             continue
 
-        # 3. Ask the LLM for a Decision (which returns a JSON string)
-        llm_json_response = query_llm(prompt, image)
+        llm_json_response = query_llm(prompt, image, token_counter)
 
-
-        # 4. Execute the Chosen Macro
         executed_action = execute_macro(llm_json_response)
         
         # 5. Update History
